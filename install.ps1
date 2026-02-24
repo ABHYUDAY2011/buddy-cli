@@ -4,14 +4,14 @@ Write-Host "Installing Buddy CLI..." -ForegroundColor Cyan
 $buddyDir = "$HOME\.buddy"
 if (!(Test-Path $buddyDir)) { New-Item -ItemType Directory -Path $buddyDir }
 
-# 2. THE CRITICAL FIX: Build the FULL RAW URL correctly
+# 2. BUILD THE RAW URL (Corrected to avoid HTML error)
 $base = "https://raw.githubusercontent.com"
-$repo = "/ABHYUDAY2011/buddy-cli/main/buddy.py"
-$finalUrl = $base + $repo
+$path = "/ABHYUDAY2011/buddy-cli/main/buddy.py"
+$finalUrl = $base + $path
 
 # 3. DOWNLOAD THE REAL PYTHON CODE
 Write-Host "Downloading Buddy code from GitHub..." -ForegroundColor Cyan
-Invoke-WebRequest -Uri $finalUrl -OutFile "$buddyDir\buddy.py" -ErrorAction Stop
+Invoke-WebRequest -Uri $finalUrl -OutFile "$buddyDir\buddy.py"
 
 # 4. Create the 'buddy' command
 $profilePath = if ($PROFILE.CurrentUserAllHosts) { $PROFILE.CurrentUserAllHosts } else { $PROFILE }
@@ -23,3 +23,6 @@ if ((Get-Content $profilePath) -notcontains "function buddy") {
 }
 
 Write-Host "[✓] Buddy is installed! Restart PowerShell and type 'buddy'." -ForegroundColor Green
+
+
+
