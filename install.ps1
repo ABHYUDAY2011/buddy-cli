@@ -20,3 +20,4 @@ if ((Get-Content $profilePath) -notcontains "function buddy") {
 
 Write-Host "[✓] Command 'buddy' is now active." -ForegroundColor Green
 Write-Host "Restart PowerShell and type 'buddy' to start." -ForegroundColor White
+
