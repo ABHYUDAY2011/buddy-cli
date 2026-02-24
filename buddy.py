@@ -1,87 +1,70 @@
-import ollama
 import time
-import sys
-import os
+import ollama
 from rich.console import Console
 from rich.panel import Panel
 from rich.live import Live
-from rich.text import Text
 from rich.prompt import Prompt
-from rich.markdown import Markdown
+from rich.text import Text
 
 console = Console()
 
 def startup_animation():
-    """Startup sequence like modern AI agents."""
+    """Startup animation."""
     console.clear()
-    with console.status("[bold cyan]Initializing Buddy Agent...", spinner="point"):
-        time.sleep(1)
-    console.print(Text("Buddy CLI v1.0.0", style="bold white"))
-    console.print(Text("Type /help for commands.", style="dim italic"))
-    console.print("")
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    with Live(Text("Initializing Buddy Systems...", style="bold cyan"), refresh_per_second=10) as live:
+        for i in range(20):
+            time.sleep(0.1)
+            frame = frames[i % len(frames)]
+            live.update(Text(f"{frame} Loading Buddy Agent...", style="bold cyan"))
+    
+    console.print(Panel.fit("[bold white]BUDDY CLI v1.0[/bold white]", border_style="blue", padding=(1, 10)))
+    console.print("[dim]Powered by local Ollama models[/dim]\n")
 
-def typewriter_stream(response_text):
-    """Simulates real-time streaming output."""
-    with Live(Text("", style="cyan"), auto_refresh=False) as live:
-        full_text = ""
-        for char in response_text:
-            full_text += char
-            live.update(Text(full_text, style="cyan"))
-            live.refresh()
-            time.sleep(0.005)
-    print("\n")
+def select_model():
+    """Lists available Ollama models and lets the user choose one."""
+    try:
+        models = ollama.list()['models']
+        model_names = [m['name'] for m in models]
+        if not model_names:
+            console.print("[bold red]No Ollama models found! Run 'ollama pull llama3' first.[/bold red]")
+            return None
+        
+        console.print("[bold cyan]Available Models:[/bold cyan]")
+        for i, name in enumerate(model_names):
+            console.print(f" {i+1}. {name}")
+        
+        choice = Prompt.ask("\nSelect a model number", default="1")
+        return model_names[int(choice) - 1]
+    except Exception as e:
+        console.print(f"[bold red]Error connecting to Ollama:[/bold red] {e}")
+        return None
 
-def show_help():
-    help_text = """
-    [bold cyan]Available Commands:[/bold cyan]
-    /help       - Show this menu
-    /image      - Analyze an image (Usage: /image <path> <prompt>)
-    /clear      - Clear the screen
-    /exit       - Close Buddy
-    """
-    console.print(Panel(help_text, border_style="dim", title="Help Center"))
-
-def chat_loop():
+def main_loop():
     startup_animation()
+    selected_model = select_model()
+    if not selected_model: return
+
+    console.print(f"\n[bold green]Connected to {selected_model}[/bold green]")
+    console.print("[italic]Type 'exit' to quit.[/italic]\n")
+
     while True:
-        try:
-            # Gemini-style interactive prompt
-            user_input = Prompt.ask("[bold blue]buddy >[/bold blue]").strip()
-            if not user_input: continue
-            
-            # --- Slash Commands ---
-            if user_input.startswith('/'):
-                parts = user_input.split()
-                cmd = parts[0].lower()
-                if cmd == '/exit': break
-                elif cmd == '/help': show_help(); continue
-                elif cmd == '/clear': console.clear(); continue
-                elif cmd == '/image':
-                    if len(parts) < 2:
-                        console.print("[red]Error: Path missing. Use: /image <path> <prompt>[/red]")
-                        continue
-                    img_path = parts[1].strip('"')
-                    prompt = " ".join(parts[2:]) if len(parts) > 2 else "Describe this image."
-                    if not os.path.exists(img_path):
-                        console.print(f"[red]Error: File not found: {img_path}[/red]")
-                        continue
-                    with console.status("[bold yellow]Analyzing...", spinner="arc"):
-                        with open(img_path, 'rb') as f:
-                            res = ollama.generate(model='moondream', prompt=prompt, images=[f.read()])
-                            typewriter_stream(res['response'])
-                    continue
+        # User input bar
+        user_input = Prompt.ask("[bold blue]buddy >[/bold blue]")
 
-            # --- Text Chat (Gemma 3) ---
-            with console.status("[bold cyan]Thinking...", spinner="dots"):
-                # Uses Gemma 3 for efficient local text processing
-                res = ollama.chat(model='gemma3:270m', messages=[{'role': 'user', 'content': user_input}])
-                typewriter_stream(res['message']['content'])
-
-        except KeyboardInterrupt:
-            console.print("\n[red]Session ended.[/red]")
+        if user_input.lower() in ["exit", "quit", "bye"]:
+            console.print("[bold red]Shutting down... Goodbye![/bold red]")
             break
-        except Exception as e:
-            console.print(f"[bold red]System Error:[/bold red] {e}")
+
+        # Thinking animation
+        with console.status(f"[bold yellow]Buddy is thinking using {selected_model}...", spinner="bouncingBall"):
+            try:
+                response = ollama.chat(model=selected_model, messages=[{'role': 'user', 'content': user_input}])
+                answer = response['message']['content']
+                console.print(Panel(answer, title="[bold cyan]Buddy[/bold cyan]", border_style="white"))
+            except Exception as e:
+                console.print(f"[bold red]AI Error:[/bold red] {e}")
 
 if __name__ == "__main__":
-    chat_loop()
+    main_loop()
+
