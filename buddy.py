@@ -8,9 +8,8 @@ from rich.prompt import Prompt, Confirm
 console = Console()
 CONFIG_PATH = os.path.join(os.environ['USERPROFILE'], '.buddy', 'config.json')
 
-# --- CONFIGURATION ENGINE ---
 def load_config():
-    default = {"model": "gemma3:270m", "api_key": "", "vision_model": "moondream"}
+    default = {"model": "gemma3:270m", "api_provider": "ollama", "api_key": "", "vision_model": "moondream"}
     if not os.path.exists(CONFIG_PATH):
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, 'w') as f: json.dump(default, f)
@@ -20,96 +19,92 @@ def load_config():
 def save_config(config):
     with open(CONFIG_PATH, 'w') as f: json.dump(config, f)
 
-# --- ADVANCED TERMINAL CONTROL ---
-def run_command(cmd):
-    """Executes a command and returns output. If it fails, Buddy tries to fix it."""
-    console.print(f"[dim]Executing: {cmd}[/dim]")
-    proc = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True)
+def run_terminal(task_description):
+    """Translates natural language to PowerShell and executes it."""
+    config = load_config()
+    prompt = f"Convert this request into a single PowerShell command: '{task_description}'. Return ONLY the command code, no backticks, no explanation."
+    res = ollama.chat(model=config['model'], messages=[{'role': 'user', 'content': prompt}])
+    cmd = res['message']['content'].strip().replace('`', '')
     
-    if proc.returncode != 0:
-        console.print(f"[bold red]Error Detected![/bold red]")
-        # Send error to AI for a fix
-        fix_prompt = f"The command '{cmd}' failed with error: {proc.stderr}. Provide only the corrected PowerShell command."
-        res = ollama.chat(model=load_config()['model'], messages=[{'role': 'user', 'content': fix_prompt}])
-        suggested_fix = res['message']['content'].strip()
-        
-        if Confirm.ask(f"Buddy suggests fix: [bold green]{suggested_fix}[/bold green]. Run it?"):
-            return run_command(suggested_fix)
-    return proc.stdout
+    if Confirm.ask(f"Buddy wants to run: [bold cyan]{cmd}[/bold cyan]. Allow?"):
+        proc = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True)
+        if proc.returncode == 0:
+            return f"Success: {proc.stdout}"
+        else:
+            return f"Error: {proc.stderr}. Analyzing fix..."
+    return "Task cancelled."
 
-# --- UI & ANIMATION ---
 def startup_animation():
     console.clear()
-    colors = ["red", "orange3", "yellow", "green", "cyan", "blue", "purple"]
-    banner_text = pyfiglet.figlet_format("BUDDY AI", font="slant")
-    
-    with Live(refresh_per_second=10) as live:
-        for i in range(20):
-            color = colors[i % len(colors)]
-            live.update(Panel(Text(banner_text, style=f"bold {color}"), subtitle="[bold white]v2.0 - Agentic Edition[/bold white]"))
-            time.sleep(0.08)
-    console.print("[dim]Type '/exit' to quit | '/models' to switch | '/api' for keys[/dim]\n")
+    colors = ["cyan", "magenta", "blue", "green", "yellow"]
+    banner = pyfiglet.figlet_format("BUDDY AI", font="slant")
+    for color in colors:
+        console.clear()
+        console.print(Panel(Text(banner, style=f"bold {color}"), subtitle="v2.5 - Agentic Multi-API", border_style=color))
+        time.sleep(0.1)
 
-def typewriter_print(text):
-    for char in text:
-        console.print(char, end="", style="cyan")
-        time.sleep(0.005)
-    print("\n")
-
-# --- MAIN ENGINE ---
 def main():
     config = load_config()
     startup_animation()
 
     while True:
         try:
-            user_input = Prompt.ask(f"[bold blue]buddy ({config['model']}) >[/bold blue]")
+            current_status = f"{config['api_provider']}:{config['model']}"
+            user_input = Prompt.ask(f"[bold blue]buddy ({current_status}) >[/bold blue]")
 
-            # COMMAND HANDLERS
             if user_input.lower() in ['/exit', 'exit']: break
-            
+
+            # --- MODEL SELECTOR ---
             if user_input.startswith('/models'):
-                models = [m['name'] for m in ollama.list()['models']]
-                console.print("[yellow]Available:[/yellow]", models)
-                new_m = Prompt.ask("Choose model", choices=models)
-                config['model'] = new_m
-                save_config(config)
+                try:
+                    raw_models = ollama.list()
+                    # Fix: Handle both dictionary and object responses from Ollama API
+                    model_list = raw_models.get('models', []) if isinstance(raw_models, dict) else raw_models.models
+                    names = [m.model if hasattr(m, 'model') else m['name'] for m in model_list]
+                    
+                    console.print("\n[bold yellow]Select a Model:[/bold yellow]")
+                    for i, name in enumerate(names):
+                        console.print(f" {i+1}. [cyan]{name}[/cyan]")
+                    
+                    choice = Prompt.ask("\nEnter number", choices=[str(i+1) for i in range(len(names))])
+                    config['model'] = names[int(choice)-1]
+                    save_config(config)
+                    console.print(f"[green]Switched to {config['model']}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Ollama Error: {e}[/red]")
                 continue
 
+            # --- API & PROVIDER SETUP ---
             if user_input.startswith('/api'):
-                config['api_key'] = Prompt.ask("Enter API Key", password=True)
+                providers = ["ollama", "google-gemini", "openai", "groq"]
+                config['api_provider'] = Prompt.ask("Select Provider", choices=providers)
+                if config['api_provider'] != "ollama":
+                    config['api_key'] = Prompt.ask(f"Enter {config['api_provider']} API Key", password=True)
                 save_config(config)
-                console.print("[green]API Key Saved![/green]")
                 continue
 
-            # IMAGE DETECTION (Path or auto-analyze)
-            img_path = None
-            if any(ext in user_input.lower() for ext in [".jpg", ".png", ".jpeg"]):
-                for word in user_input.split():
-                    if os.path.exists(word.strip('"')):
-                        img_path = word.strip('"')
-                        user_input = user_input.replace(word, "").strip() or "Describe this image"
-                        break
-
-            # AI PROCESSING
-            with console.status("[bold yellow]Thinking...", spinner="bouncingBar"):
-                if img_path:
-                    res = ollama.generate(model=config['vision_model'], prompt=user_input, images=[open(img_path, 'rb').read()])
+            # --- SMART EXECUTION ---
+            with console.status("[bold yellow]Processing...", spinner="dots"):
+                # Detect file/PC tasks
+                if any(k in user_input.lower() for k in ["make a file", "create folder", "open notepad", "run script"]):
+                    ans = run_terminal(user_input)
+                # Image Analysis
+                elif any(ext in user_input.lower() for ext in [".jpg", ".png", ".jpeg"]):
+                    path = user_input.split()[-1].strip('"') # Basic path extractor
+                    res = ollama.generate(model=config['vision_model'], prompt="Describe this", images=[open(path, 'rb').read()])
                     ans = res['response']
-                elif user_input.startswith(("run ", "do ", "execute ")):
-                    # Extract command and run it
-                    cmd = user_input.split(" ", 1)[1]
-                    ans = run_command(cmd)
+                # Standard Chat
                 else:
                     res = ollama.chat(model=config['model'], messages=[{'role': 'user', 'content': user_input}])
                     ans = res['message']['content']
 
-            console.print("[bold magenta]Buddy:[/bold magenta]")
-            typewriter_print(ans)
+            console.print("\n[bold magenta]Buddy:[/bold magenta]")
+            console.print(ans)
 
         except Exception as e:
             console.print(f"[bold red]System Error:[/bold red] {e}")
 
 if __name__ == "__main__":
     main()
+
 
