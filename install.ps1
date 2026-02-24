@@ -1,20 +1,20 @@
+# 1. Clear out the broken file
+$buddyPath = "$HOME\.buddy\buddy.py"
+if (Test-Path $buddyPath) { Remove-Item $buddyPath -Force }
 
-Write-Host "Installing Buddy CLI..." -ForegroundColor Cyan
-$buddyDir = "$HOME\.buddy"
-if (!(Test-Path $buddyDir)) { New-Item -ItemType Directory -Path $buddyDir }
-
-# THIS IS THE CRITICAL FIX: The full RAW URL to your python code
+# 2. THE CORRECT FULL URL (CRITICAL: Do not cut this short)
 $rawUrl = "https://raw.githubusercontent.com"
-Invoke-WebRequest -Uri $rawUrl -OutFile "$buddyDir\buddy.py"
 
-# Setup the global command (User Profile)
-$profilePath = if ($PROFILE.CurrentUserAllHosts) { $PROFILE.CurrentUserAllHosts } else { $PROFILE }
-if (!(Test-Path $profilePath)) { New-Item -Type File -Path $profilePath -Force }
+Write-Host "Downloading Buddy from ABHYUDAY2011 repository..." -ForegroundColor Cyan
+Invoke-WebRequest -Uri $rawUrl -OutFile $buddyPath
 
-$aliasFunc = "`nfunction buddy { python `"$buddyDir\buddy.py`" `$args }`n"
-$currentProfile = Get-Content $profilePath
-if ($currentProfile -notcontains "function buddy") {
-    Add-Content -Path $profilePath -Value $aliasFunc
+# 3. VERIFY
+if (Test-Path $buddyPath) {
+    $firstLine = Get-Content $buddyPath -TotalCount 1
+    if ($firstLine -like "*import*") {
+        Write-Host "[✓] SUCCESS! Real Python code installed." -ForegroundColor Green
+        Write-Host "Type 'buddy' to start!" -ForegroundColor White
+    } else {
+        Write-Host "[X] ERROR: Still downloaded HTML. Ensure the full URL is copied." -ForegroundColor Red
+    }
 }
-Write-Host "[✓] Installation complete! Restart PowerShell." -ForegroundColor Green
-
