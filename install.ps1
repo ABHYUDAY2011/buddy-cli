@@ -1,25 +1,20 @@
-Write-Host "Installing Buddy CLI..." -ForegroundColor Cyan
 
-# 1. Folder Setup
+Write-Host "Installing Buddy CLI..." -ForegroundColor Cyan
 $buddyDir = "$HOME\.buddy"
 if (!(Test-Path $buddyDir)) { New-Item -ItemType Directory -Path $buddyDir }
 
-# 2. BUILD THE RAW URL (Corrected to avoid HTML error)
-$base = "https://raw.githubusercontent.com"
-$path = "/ABHYUDAY2011/buddy-cli/main/buddy.py"
-$finalUrl = $base + $path
+# THIS IS THE CRITICAL FIX: The full RAW URL to your python code
+$rawUrl = "https://raw.githubusercontent.com"
+Invoke-WebRequest -Uri $rawUrl -OutFile "$buddyDir\buddy.py"
 
-# 3. DOWNLOAD THE REAL PYTHON CODE
-Write-Host "Downloading Buddy code from GitHub..." -ForegroundColor Cyan
-Invoke-WebRequest -Uri $finalUrl -OutFile "$buddyDir\buddy.py"
-
-# 4. Create the 'buddy' command
+# Setup the global command (User Profile)
 $profilePath = if ($PROFILE.CurrentUserAllHosts) { $PROFILE.CurrentUserAllHosts } else { $PROFILE }
 if (!(Test-Path $profilePath)) { New-Item -Type File -Path $profilePath -Force }
 
 $aliasFunc = "`nfunction buddy { python `"$buddyDir\buddy.py`" `$args }`n"
-if ((Get-Content $profilePath) -notcontains "function buddy") {
+$currentProfile = Get-Content $profilePath
+if ($currentProfile -notcontains "function buddy") {
     Add-Content -Path $profilePath -Value $aliasFunc
 }
+Write-Host "[✓] Installation complete! Restart PowerShell." -ForegroundColor Green
 
-Write-Host "[✓] Buddy is installed! Restart PowerShell and type 'buddy'." -ForegroundColor Green
