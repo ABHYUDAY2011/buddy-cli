@@ -1,136 +1,151 @@
-import os, sys, subprocess, json, time
-
-# --- STEP 1: AUTO-DEPENDENCY CHECK ---
-def install_deps():
-    reqs = ["ollama", "rich", "pyfiglet", "pywin32"]
-    for package in reqs:
-        try:
-            if package == "pywin32": import win32clipboard
-            else: __import__(package)
-        except ImportError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
-
-install_deps()
-
-# --- STEP 2: IMPORTS ---
-import ollama
-import pyfiglet
-import win32clipboard
+import os, sys, subprocess, json, time, threading, msvcrt, re
+import ollama, pyfiglet, win32clipboard
+from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
 from rich.live import Live
+from rich.syntax import Syntax
 from rich.text import Text
 from rich.prompt import Prompt, Confirm
+
+# --- BOOTSTRAPPER ---
+def bootstrap():
+    reqs = ["ollama", "rich", "pyfiglet", "pywin32"]
+    for p in reqs:
+        try: __import__(p)
+        except ImportError:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", p, "--quiet"])
+
+bootstrap()
 
 console = Console()
 CONFIG_DIR = os.path.join(os.environ['USERPROFILE'], '.buddy')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
+stop_response = False
 
-# --- CONFIG ENGINE ---
 def load_config():
-    default = {"model": "qwen2.5:0.5b", "api_provider": "ollama", "api_key": "", "vision_model": "moondream"}
+    default = {"model": "qwen2.5:0.5b", "vision_model": "moondream", "theme": "green"}
     if not os.path.exists(CONFIG_DIR): os.makedirs(CONFIG_DIR, exist_ok=True)
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, 'w') as f: json.dump(default, f)
         return default
     with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
-        for k, v in default.items():
-            if k not in config: config[k] = v
-        return config
+        return {**default, **json.load(f)}
 
-def save_config(config):
-    with open(CONFIG_PATH, 'w') as f: json.dump(config, f, indent=4)
+# --- POLYGLOT FILE ENGINE ---
+def save_code_to_file(code_content, language):
+    # Mapping languages to correct Windows extensions
+    ext_map = {
+        "python": "py", "cpp": "cpp", "c++": "cpp", "c": "c", "java": "java", 
+        "rust": "rs", "go": "go", "javascript": "js", "typescript": "ts",
+        "html": "html", "css": "css", "powershell": "ps1", "bash": "sh",
+        "ruby": "rb", "php": "php", "sql": "sql", "csharp": "cs", "c#": "cs"
+    }
+    ext = ext_map.get(language.lower(), "txt")
+    timestamp = int(time.time())
+    filename = f"buddy_code_{timestamp}.{ext}"
+    
+    if Confirm.ask(f"[bold green]Save this {language.upper()} code as [cyan]{filename}[/cyan]?[/bold green]"):
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(code_content)
+        console.print(f"[bold green]✅ File created: {os.path.abspath(filename)}[/bold green]")
 
-# --- TERMINAL & CLIPBOARD TOOLS ---
-def get_clip():
+# --- TERMINAL / BASH ENGINE ---
+def terminal_agent(task, model):
+    sys_guide = "You are a Windows Automation Agent. Convert task to ONE-LINE PowerShell. Output ONLY raw command. No backticks."
     try:
-        win32clipboard.OpenClipboard()
-        if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_HDROP):
-            path = win32clipboard.GetClipboardData(win32clipboard.CF_HDROP)[0]
-            win32clipboard.CloseClipboard()
-            return path
-        win32clipboard.CloseClipboard()
-    except: pass
-    return None
-
-def run_pc_task(task, model):
-    sys_msg = "You are a Windows Expert. Convert request to ONE-LINE PowerShell. Output ONLY command. No talk, no backticks."
-    try:
-        res = ollama.chat(model=model, messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': task}])
-        cmd = res['message']['content'].strip().replace('`', '').replace('powershell', '').split('\n')[0]
-        console.print(Panel(f"[bold yellow]Task:[/bold yellow] {cmd}", title="Terminal Agent"))
-        if Confirm.ask("Execute?"):
-            proc = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True, timeout=10)
+        res = ollama.chat(model=model, messages=[{'role': 'system', 'content': sys_guide}, {'role': 'user', 'content': task}])
+        cmd = res['message']['content'].strip().replace('`', '').replace('powershell', '').strip()
+        console.print(Panel(f"[bold yellow]Bash Command:[/bold yellow]\n[bold cyan]{cmd}[/bold cyan]", title="🚀 Terminal Agent"))
+        if Confirm.ask("Bash this into terminal?"):
+            proc = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True)
             return proc.stdout if proc.returncode == 0 else f"Error: {proc.stderr}"
-    except: return "Task failed."
-    return "Skipped."
+    except Exception as e: return f"Agent Error: {e}"
+    return "Cancelled."
 
-# --- ANIMATION ---
-def startup():
+# --- INTERRUPT LISTENER ---
+def listen_for_esc():
+    global stop_response
+    while True:
+        if msvcrt.kbhit() and msvcrt.getch() == b'\x1b':
+            stop_response = True
+        time.sleep(0.05)
+
+# --- ADVANCED TYPEWRITER WITH CODE DETECTION ---
+def typewriter(text):
+    global stop_response
+    stop_response = False
+    
+    # Split text into parts (Normal Text and Code Blocks)
+    parts = re.split(r'(```\w*\n.*?\n```)', text, flags=re.DOTALL)
+    
+    for part in parts:
+        if stop_response: break
+        
+        if part.startswith("```"):
+            # Extract language and actual code content
+            match = re.match(r'```(\w*)\n(.*?)\n```', part, re.DOTALL)
+            if match:
+                lang = match.group(1) or "txt"
+                code = match.group(2)
+                
+                # Render syntax highlighted block
+                syntax = Syntax(code, lang, theme="monokai", line_numbers=True, word_wrap=True)
+                console.print("\n")
+                console.print(Panel(syntax, title=f" {lang.upper()} SOURCE ", border_style="bold green"))
+                
+                # Prompt to save this specific block
+                save_code_to_file(code, lang)
+        else:
+            # Type out normal conversational text
+            for char in part:
+                if stop_response:
+                    console.print("\n[bold red][!] Muted by user.[/bold red]")
+                    break
+                console.print(char, end="", style="bright_cyan")
+                time.sleep(0.005)
+    print("\n")
+
+def startup_animation():
     console.clear()
-    colors = ["cyan", "magenta", "yellow", "green", "blue"]
     banner = pyfiglet.figlet_format("BUDDY AI", font="slant")
+    colors = ["cyan", "magenta", "yellow", "green", "blue"]
     with Live(refresh_per_second=10) as live:
         for i in range(15):
             c = colors[i % len(colors)]
-            live.update(Panel(Text(banner, style=f"bold {c}"), subtitle="v3.3 - Agentic & Vision", border_style=c))
-            time.sleep(0.06)
-    console.print("[dim]Commands: /model | /api | /exit[/dim]\n")
+            live.update(Panel(Text(banner, style=f"bold {c}"), subtitle="v6.0 - Polyglot Developer Agent | ESC to Mute", border_style=c))
+            time.sleep(0.07)
 
 # --- MAIN LOOP ---
 def main():
     config = load_config()
-    startup()
+    startup_animation()
+    threading.Thread(target=listen_for_esc, daemon=True).start()
 
     while True:
         try:
-            status = f"{config['api_provider']}:{config['model']}"
-            user_input = Prompt.ask(f"\n[bold blue]buddy ({status}) >[/bold blue]")
+            prompt_time = datetime.now().strftime('%H:%M')
+            user_input = Prompt.ask(f"\n[bold magenta]buddy[/bold magenta][dim]@{prompt_time} >[/dim] ")
 
-            if user_input.lower() in ['exit', '/exit']: break
+            if user_input.lower() in ['exit', 'quit']: break
 
-            # --- GLOBAL COMMANDS ---
-            if user_input.startswith('/model'):
-                try:
-                    res = ollama.list()
-                    models = res.get('models', []) if isinstance(res, dict) else res.models
-                    names = [m.get('name', m.get('model')) if isinstance(m, dict) else m.model for m in models]
-                    console.print("\n[yellow]Select Model:[/yellow]")
-                    for i, n in enumerate(names): console.print(f" {i+1}. {n}")
-                    idx = int(Prompt.ask("Enter number")) - 1
-                    config['model'] = names[idx]
-                    save_config(config)
-                    console.print(f"[green]Switched to {config['model']}[/green]")
-                except: console.print("[red]Ollama not running for model list.[/red]")
-                continue
-
-            if user_input.startswith('/api'):
-                config['api_provider'] = Prompt.ask("Select Provider", choices=["ollama", "google-gemini", "openai"])
-                if config['api_provider'] != "ollama":
-                    config['api_key'] = Prompt.ask("Paste API Key (Right-click)", password=True)
-                save_config(config); continue
-
-            # --- PROCESSING ---
-            with console.status("[bold yellow]Thinking...", spinner="bouncingBar"):
-                clip_path = get_clip()
-                # Image detection
-                if clip_path and any(clip_path.lower().endswith(ex) for ex in [".jpg",".png",".jpeg"]):
-                    res = ollama.generate(model=config['vision_model'], prompt="Describe this.", images=[open(clip_path, 'rb').read()])
-                    ans = res['response']
-                # PC Task detection
-                elif any(k in user_input.lower() for k in ["make", "create", "open", "run", "delete"]):
-                    ans = run_pc_task(user_input, config['model'])
-                # Default Chat
+            with console.status("[bold yellow]Buddy is thinking...", spinner="arc"):
+                # Detect Terminal Tasks
+                bash_triggers = ["make folder", "create folder", "delete", "open", "run", "check system"]
+                
+                if any(k in user_input.lower() for k in bash_triggers):
+                    ans = terminal_agent(user_input, config['model'])
                 else:
+                    # General Chat or Code Request
                     res = ollama.chat(model=config['model'], messages=[{'role': 'user', 'content': user_input}])
                     ans = res['message']['content']
 
-            console.print(f"\n[bold magenta]Buddy:[/bold magenta]\n{ans}")
+            console.print(f"\n[bold cyan]Buddy:[/bold cyan]")
+            typewriter(ans)
 
-        except Exception as e: console.print(f"[red]Error: {e}[/red]")
+        except Exception as e:
+            console.print(f"[bold red]System Error:[/bold red] {e}")
 
 if __name__ == "__main__":
     main()
-
 
